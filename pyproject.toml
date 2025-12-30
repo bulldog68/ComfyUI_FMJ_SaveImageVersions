@@ -1,7 +1,7 @@
 [project]
 name = "ComfyUI_FMJ_SaveImageVersions"
 description = "Sauvegarde d’images avec métadonnées complètes (prompt, seed, versions logicielles) + chargement intelligent."
-version = "1.0.0"
+version = "1.0.1"
 license = { file = "LICENSE" }
 dependencies = [""]
 

@@ -58,7 +58,13 @@ def _safe_json_loads(s: str) -> Optional[Dict]:
     except Exception:
         return None
 
-class FMJLoadMetadata:  # ✅ CORRIGÉ : deux-points ajoutés
+def _normalize_node_name(name: str) -> str:
+    """Normalise le nom d'un node pour comparaison (minuscules, tirets → soulignés)"""
+    if not isinstance(name, str):
+        return ""
+    return name.lower().replace("-", "_").replace(" ", "_")
+
+class FMJLoadMetadata:
     @classmethod
     def INPUT_TYPES(cls):
         output_dir = folder_paths.get_output_directory()
@@ -94,6 +100,7 @@ class FMJLoadMetadata:  # ✅ CORRIGÉ : deux-points ajoutés
         data = {}
         prompt_text = ""
         seed_display = "unknown"
+        fmj_snapshot = None
 
         try:
             if file.endswith(".json"):
@@ -106,12 +113,14 @@ class FMJLoadMetadata:  # ✅ CORRIGÉ : deux-points ajoutés
                     seed_display = str(int(seed_value))
                 else:
                     seed_display = str(seed_value)
+                fmj_snapshot = data.get("fmj_snapshot")
 
             elif file.endswith(".png"):
                 img = Image.open(file_path)
                 pnginfo = img.info
                 prompt_text = pnginfo.get("prompt", "")
                 seed_display = pnginfo.get("seed", "unknown")
+                fmj_snapshot = pnginfo.get("fmj_snapshot")
 
                 versions_data = {}
                 for key in ["ComfyUI_Version", "Python_Version", "PyTorch_Version", "CUDA_Version", "Custom_Nodes_Versions"]:
@@ -153,16 +162,105 @@ class FMJLoadMetadata:  # ✅ CORRIGÉ : deux-points ajoutés
         else:
             report_lines.append(f"\n✅ ComfyUI version matches: {current_comfy}")
 
-        all_nodes = set(saved_custom.keys()) | set(current_custom.keys())
-        if all_nodes:
-            report_lines.append("\n🧩 Custom Nodes:")
-            for node in sorted(all_nodes):
-                saved_ver = saved_custom.get(node, "NOT INSTALLED")
-                current_ver = current_custom.get(node, "NOT INSTALLED")
-                if saved_ver != current_ver:
-                    report_lines.append(f"   ⚠️  {node}: {saved_ver} → {current_ver}")
-                else:
-                    report_lines.append(f"   ✅ {node}: {current_ver}")
+        saved_mgr = saved_custom.get("ComfyUI-Manager", "NOT INSTALLED")
+        current_mgr = current_custom.get("ComfyUI-Manager", "NOT INSTALLED")
+        if saved_mgr != current_mgr:
+            report_lines.append(f"\n⚠️  ComfyUI-Manager version changed: {saved_mgr} → {current_mgr}")
+        else:
+            report_lines.append(f"\n✅ ComfyUI-Manager version matches: {current_mgr}")
+
+        # === COMPARAISON NORMALISÉE DES NODES ===
+        all_nodes_displayed = set()
+        report_lines.append("\n🧩 Custom Nodes:")
+
+        # D'abord, traiter les nodes sauvegardés
+        for saved_node in sorted(saved_custom.keys()):
+            if saved_node == "NOT INSTALLED" or saved_node == "ComfyUI-Manager":
+                continue
+
+            saved_ver = saved_custom[saved_node]
+            if saved_ver == "NOT INSTALLED":
+                continue
+
+            normalized_saved = _normalize_node_name(saved_node)
+            found_match = False
+
+            # Chercher un node actuel qui correspond
+            for current_node, current_ver in current_custom.items():
+                if _normalize_node_name(current_node) == normalized_saved:
+                    if saved_ver == current_ver:
+                        report_lines.append(f"   ✅ {saved_node}: {saved_ver}")
+                    else:
+                        report_lines.append(f"   ⚠️  {saved_node}: {saved_ver} → {current_ver}")
+                    found_match = True
+                    all_nodes_displayed.add(current_node)
+                    break
+
+            if not found_match:
+                report_lines.append(f"   ⚠️  {saved_node}: {saved_ver} → NOT INSTALLED")
+
+        # Ensuite, afficher les nodes actuels non dans le snapshot (facultatif)
+        # (on omet pour plus de clarté)
+
+        # === GÉNÉRATION DU SCRIPT DE RESTAURATION ===
+        restore_needed = (
+            (saved_comfy != "Unknown" and saved_comfy != current_comfy) or
+            (saved_mgr != "NOT INSTALLED" and saved_mgr != current_mgr) or
+            fmj_snapshot
+        )
+
+        if restore_needed:
+            script_lines = [
+                "#!/bin/bash",
+                "set -e",
+                "",
+                "echo '=== RESTAURATION FMJ ==='",
+                "source venv/bin/activate",
+                ""
+            ]
+
+            custom_nodes_dir = os.path.join(comfy_root, "custom_nodes")
+
+            # 1. Restaurer ComfyUI
+            if saved_comfy != "Unknown" and saved_comfy != current_comfy:
+                script_lines.extend([
+                    "echo '🔄 Restauration de ComfyUI...'",
+                    f"cd {comfy_root}",
+                    "git fetch --all --tags",
+                    f"git checkout {saved_comfy}",
+                    "pip install -r requirements.txt",
+                    ""
+                ])
+
+            # 2. Restaurer ComfyUI-Manager
+            if saved_mgr != "NOT INSTALLED" and saved_mgr != current_mgr:
+                script_lines.extend([
+                    "echo '🔄 Restauration de ComfyUI-Manager...'",
+                    f"cd {os.path.join(custom_nodes_dir, 'ComfyUI-Manager')}",
+                    "git fetch --all --tags",
+                    f"git checkout {saved_mgr}",
+                    "if [ -f requirements.txt ]; then pip install -r requirements.txt; fi",
+                    "if [ -f install.py ]; then python install.py; fi",
+                    ""
+                ])
+
+            # 3. Restaurer les autres nodes via snapshot
+            if fmj_snapshot:
+                script_lines.extend([
+                    "echo '🔄 Restauration des custom nodes via snapshot...'",
+                    f"cd {comfy_root}",
+                    f"python custom_nodes/ComfyUI-Manager/cm-cli.py restore-snapshot \"{fmj_snapshot}\"",
+                    ""
+                ])
+
+            script_lines.append("echo '✅ Restauration terminée. Redémarrez ComfyUI.'")
+
+            report_lines.append(f"\n📦 Snapshot associé: {fmj_snapshot if fmj_snapshot else 'aucun'}")
+            report_lines.append("\n🔧 SCRIPT DE RESTAURATION")
+            report_lines.append("Copiez-collez dans un terminal (dans le dossier ComfyUI) :")
+            report_lines.append("")
+            for line in script_lines:
+                report_lines.append(f"   {line}")
 
         report_lines.append("\n" + "=" * 60)
         report = "\n".join(report_lines)

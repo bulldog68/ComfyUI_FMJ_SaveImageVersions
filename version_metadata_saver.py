@@ -26,7 +26,8 @@ class FMJSaveImageVersions:
                 "filename_prefix": ("STRING", {"default": "FMJ_Versioned"}),
                 "save_versions_as_json": ("BOOLEAN", {"default": False}),
                 "prompt": ("STRING", {"default": ""}),
-                "generation_seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),  # ✅ Pas "seed" → pas de randomize !
+                "generation_seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "create_comfyui_snapshot": ("BOOLEAN", {"default": False}),  # ✅ Nouveau bouton
             },
             "hidden": {"prompt_dict": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
         }
@@ -89,9 +90,10 @@ class FMJSaveImageVersions:
         filename_prefix: str = "FMJ_Versioned",
         save_versions_as_json: bool = False,
         prompt: str = "",
-        generation_seed: int = 0,  # ✅ Même traitement
+        generation_seed: int = 0,
         prompt_dict: Optional[Dict] = None,
-        extra_pnginfo: Optional[Dict[str, Any]] = None
+        extra_pnginfo: Optional[Dict[str, Any]] = None,
+        create_comfyui_snapshot: bool = False,  # ✅ Paramètre ajouté
     ) -> Dict[str, List[Dict[str, str]]]:
         seed_str = str(generation_seed)
 
@@ -107,9 +109,53 @@ class FMJSaveImageVersions:
             i = 255.0 * image.cpu().numpy()
             img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
 
+            filename_with_batch = filename.replace("%batch_num%", str(batch_number))
+            file = f"{filename_with_batch}_{counter:05}_.png"
+
+            # === AJOUT DU SNAPSHOT (seulement si demandé) ===
+            snapshot_name = None
+            if create_comfyui_snapshot:
+                try:
+                    comfy_root = os.path.dirname(folder_paths.get_input_directory())
+                    cm_cli_path = os.path.join(comfy_root, "custom_nodes", "ComfyUI-Manager", "cm-cli.py")
+
+                    if os.path.exists(cm_cli_path):
+                        snapshots_dir = os.path.join(comfy_root, "user", "default", "ComfyUI-Manager", "snapshots")
+                        if not os.path.exists(snapshots_dir):
+                            snapshots_dir = os.path.join(comfy_root, "user", "__manager", "snapshots")
+                        os.makedirs(snapshots_dir, exist_ok=True)
+
+                        before = set(os.listdir(snapshots_dir))
+                        result = subprocess.run(
+                            [sys.executable, cm_cli_path, "save-snapshot"],
+                            capture_output=True,
+                            text=True,
+                            cwd=comfy_root
+                        )
+
+                        if result.returncode == 0:
+                            after = set(os.listdir(snapshots_dir))
+                            new_files = after - before
+                            if new_files:
+                                auto_name = next(iter(new_files))
+                                auto_path = os.path.join(snapshots_dir, auto_name)
+                                custom_name = f"{os.path.splitext(file)[0]}.snapshot.json"
+                                custom_path = os.path.join(snapshots_dir, custom_name)
+                                os.rename(auto_path, custom_path)
+                                snapshot_name = custom_name
+                            else:
+                                print("[FMJ] ⚠️ Aucun snapshot détecté.")
+                        else:
+                            print(f"[FMJ] ❌ cm-cli erreur: {result.stderr}")
+                    else:
+                        print(f"[FMJ] ❌ cm-cli.py introuvable.")
+                except Exception as e:
+                    print(f"[FMJ] ❌ Erreur snapshot: {e}")
+
+            # === MÉTADONNÉES PNG (inchangées) ===
             metadata = PngImagePlugin.PngInfo()
             metadata.add_text("prompt", prompt)
-            metadata.add_text("seed", seed_str)  # ⚠️ On sauvegarde toujours comme "seed" dans le PNG
+            metadata.add_text("seed", seed_str)
 
             if prompt_dict is not None:
                 metadata.add_text("prompt_dict", json.dumps(prompt_dict, separators=(',', ':')))
@@ -123,18 +169,21 @@ class FMJSaveImageVersions:
             for key, value in version_metadata.items():
                 metadata.add_text(key, value)
 
-            filename_with_batch = filename.replace("%batch_num%", str(batch_number))
-            file = f"{filename_with_batch}_{counter:05}_.png"
+            # ✅ Ajout du snapshot dans les métadonnées
+            if snapshot_name:
+                metadata.add_text("fmj_snapshot", snapshot_name)
+
             filepath = os.path.join(full_output_folder, file)
             img.save(filepath, pnginfo=metadata, compress_level=self.compress_level)
 
+            # === SAUVEGARDE DU JSON (inchangée + snapshot) ===
             if save_versions_as_json:
                 json_file = os.path.splitext(file)[0] + ".json"
                 json_path = os.path.join(full_output_folder, json_file)
 
                 full_metadata = {
                     "prompt": prompt,
-                    "seed": generation_seed,  # ✅ Et dans le JSON, on l'appelle "seed"
+                    "seed": generation_seed,
                     "prompt_dict": prompt_dict,
                     "extra_pnginfo": extra_pnginfo,
                     "versions": {
@@ -145,6 +194,10 @@ class FMJSaveImageVersions:
                         "Custom_Nodes_Versions": json.loads(version_metadata["Custom_Nodes_Versions"])
                     }
                 }
+
+                # ✅ Ajout du snapshot dans le JSON
+                if snapshot_name:
+                    full_metadata["fmj_snapshot"] = snapshot_name
 
                 with open(json_path, "w", encoding="utf-8") as f:
                     json.dump(full_metadata, f, separators=(',', ':'), ensure_ascii=False)
