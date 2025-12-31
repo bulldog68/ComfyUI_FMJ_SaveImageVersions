@@ -1,138 +1,188 @@
-# 🌀 **FMJ Save Image + Versions**
+# 📦 ComfyUI_FMJ_SaveImageVersions
 
-> **Custom Nodes pour ComfyUI**  
-> Sauvegarde d’images avec métadonnées complètes (prompt, seed, versions logicielles) + chargement intelligent.
-
----
-
-## 📦 Installation
-
-1. Clone ce dossier dans `ComfyUI/custom_nodes/` :
-   ```bash
-   git clone https://github.com/votre-nom/ComfyUI_FMJ_SaveImageVersions.git
-   ```
-2. Redémarre ComfyUI.
-
-> ✅ Compatible avec toutes les versions récentes de ComfyUI.
+**Advanced image saving with full environment snapshot & reproducible restoration**  
+*By FMJ — December 2025*
 
 ---
 
-## 🧩 Nœud 1 : **🌀 FMJ Save Image + Versions**
+## 🔧 Features
 
-### 🔹 Description
-Sauvegarde les images générées **avec traçabilité totale** :
-- Prompt texte
-- Seed de génération
-- Versions exactes de **ComfyUI**, **Python**, **PyTorch**, **CUDA**, et **tous les custom nodes**
-- Données sauvegardées **dans le PNG** (métadonnées standards) **et/ou dans un fichier `.json` séparé**
+✅ **Smart Saving**:
+- PNG with **embedded workflow** (just like official `SaveImage`)
+- **Positive/negative prompts** stored in PNG metadata
+- Automatic **environment snapshot** (Python, PyTorch, CUDA, Git commits)
 
-### 🔸 Entrées
+✅ **Reproducible Restoration**:
+- Recreate **exact environment** from just a PNG + `.snapshot.txt`
+- Interactive restoration script (Linux/macOS/Windows)
+- Version verification + user confirmation
 
-| Entrée | Type | Description |
-|-------|------|-------------|
-| `images` | `IMAGE` | Images à sauvegarder |
-| `filename_prefix` | `STRING` | Préfixe du nom de fichier (ex: `"FMJ_MonProjet"`) |
-| `save_versions_as_json` | `BOOLEAN` | Si `True`, crée un fichier `.json` à côté de l’image |
-| `prompt` | `STRING` | Texte du prompt (à connecter depuis un nœud texte ou CLIP) |
-| `generation_seed` | `INT` | Seed de génération (à brancher depuis KSampler, Random Seed, etc.) |
-
-> 💡 **Astuce** : Le nom `generation_seed` évite l’interface parasite (`randomize`) tout en restant fonctionnel.
-
-### 🔸 Comportement
-- Fichier PNG généré : `FMJ_XXXXX_.png`
-- Fichier JSON optionnel : `FMJ_XXXXX_.json`
-- Les métadonnées PNG incluent :
-  - `prompt`
-  - `seed`
-  - `ComfyUI_Version`, `Python_Version`, etc.
-- Le JSON contient **toutes les données en clair**, facilement exploitables par script.
+✅ **ComfyUI Integration**:
+- **Save node** with option to disable snapshot
+- **Load node** that extracts prompts, config, and provides restore command
 
 ---
 
-## 🧩 Nœud 2 : **🔍 FMJ Load Metadata**
+## 📁 File Structure
 
-### 🔹 Description
-Charge les métadonnées depuis **un fichier `.png` ou `.json`** et affiche un **rapport complet** :
-- Prompt **complet** (non tronqué)
-- Seed utilisée
-- Comparaison des versions logicielles (avec alertes si incompatibilité)
-
-### 🔸 Entrées
-
-| Entrée | Type | Description |
-|-------|------|-------------|
-| `file` | `STRING (dropdown)` | Liste **tous les `.png` et `.json`** du dossier `output/` |
-
-### 🔸 Sorties
-
-| Sortie | Type | Usage |
-|--------|------|-------|
-| `prompt_text` | `STRING` | Prompt brut (utile pour rebrancher dans un workflow) |
-| `version_report` | `STRING` | Rapport complet (à connecter à un **nœud "Show Text"** ou affiché dans l’UI) |
-
-### 🔸 Exemple de rapport
-
-```
-🔍 FMJ Metadata Load Report:
-============================================================
-📝 Full Prompt:
-masterpiece, best quality, photorealistic, a red panda in snow
-
-🔢 Seed:
-   217625533534410
-
-✅ ComfyUI version matches: v0.3.12-45-gabc123
-
-🧩 Custom Nodes:
-   ✅ ComfyUI-Impact-Pack: v5.12.3
-   ⚠️  ComfyUI-Manager: v2.4 → v2.5
-============================================================
-```
-
-> ✅ Idéal pour **auditer**, **reproduire**, ou **diagnostiquer** une génération ancienne.
-
----
-
-## 🛠️ Cas d’usage recommandés
-
-### 1. **Reproductibilité long terme**
-- Sauvegarde avec `save_versions_as_json = True`
-- Archive le `.png` + `.json`
-- Des mois plus tard : utilise **FMJ Load Metadata** pour vérifier que ton environnement est compatible
-
-### 2. **Partage sécurisé**
-- Envoie le `.png` → le destinataire peut **recharger le workflow complet** (via clic droit → *Open in ComfyUI*)  
-- Tu peux aussi envoyer le `.json` pour une **inspection manuelle** des versions
-
-### 3. **Audit de production**
-- Intègre le nœud dans tous tes workflows finaux
-- Garde une trace **machine-readable** de chaque génération
-
----
-
-## 📁 Structure des fichiers
-
-```
+```bash
 ComfyUI/
 └── custom_nodes/
     └── ComfyUI_FMJ_SaveImageVersions/
         ├── __init__.py
-        ├── version_metadata_saver.py   → 💾 FMJ Save Image + Versions
-        └── load_metadata.py            → 🔍 FMJ Load Metadata
+        ├── save_restore_nodes.py   # ComfyUI nodes
+        ├── snapshot.py             # Environment snapshot generator
+        ├── restore_snapshot.sh     # Linux/macOS restore script
+        └── restore_snapshot.bat    # Windows restore script
 ```
 
 ---
 
-## 🔄 Compatibilité
+## 🚀 Installation
 
-- ✅ **ComfyUI** (vanilla)
-- ✅ **ComfyUI-Manager**
-- ✅ **Impact Pack**, **Efficiency Nodes**, etc.
-- ✅ Tous les systèmes (Windows, Linux, macOS)
+1. **Create the folder** `ComfyUI/custom_nodes/ComfyUI_FMJ_SaveImageVersions/`
+
+2. **Place these files** inside:
+   - [`__init__.py`](#initpy)
+   - [`save_restore_nodes.py`](#save_restore_nodespy)
+   - [`snapshot.py`](#snapshotpy)
+   - [`restore_snapshot.sh`](#restore_snapshotsh)
+   - [`restore_snapshot.bat`](#restore_snapshotbat)
+
+3. **Restart ComfyUI**
+
+4. **Verify** nodes appear in ComfyUI:
+   - **"Save Image + Snapshot (FMJ)"**
+   - **"Load Image + Snapshot (FMJ)"**
 
 ---
 
-## 📜 Licence
-GNU V3
-> 🌀 **FMJ Nodes** – Parce que chaque pixel mérite d’être tracé.  
-> Créé avec ❤️ pour la communauté ComfyUI.
+### `__init__.py`
+```python
+from .save_restore_nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+```
+
+### `save_restore_nodes.py`
+→ [Get the complete file here](#complete-save_restore_nodespy-file)
+
+### `snapshot.py`
+→ Use your existing version that generates `comfyui_snapshot.txt`  
+(The version provided in conversation history works)
+
+---
+
+## 🖼️ Usage — Saving
+
+1. In your workflow, replace `SaveImage` with **"Save Image + Snapshot (FMJ)"**
+
+2. **Configure**:
+   - `positive`: your positive prompt
+   - `negative`: your negative prompt
+   - `filename_prefix`: file prefix (e.g., `"my_project"`)
+   - `save_snapshot`: ✅ checked (uncheck to disable)
+
+3. **Execute** → in `output/`, you'll get:
+   ```
+   my_project_20251231_100000_00.png
+   my_project_20251231_100000_00.snapshot.txt
+   ```
+
+> 💡 The PNG contains the **workflow** and **prompts** → directly loadable in ComfyUI.
+
+---
+
+## 📂 Usage — Loading
+
+1. **Copy** `.png` + `.snapshot.txt` files to `input/` *(optional but useful)*
+
+2. Use **"Load Image + Snapshot (FMJ)"**:
+   - Connect `positive` / `negative` to your `CLIP Text Encode` nodes
+   - Connect `config_info` to a `ShowText` node to view environment
+   - Connect `restore_command` to a `ShowText` node → you'll see:
+
+     ```text
+     # 📌 Open a terminal in the ComfyUI directory, then copy-paste this line:
+     # ⚠️  Quit ComfyUI before starting restoration!
+     ./custom_nodes/ComfyUI_FMJ_SaveImageVersions/restore_snapshot.sh "output/my_project_20251231_100000_00.snapshot.txt"
+     ```
+
+---
+
+## 🔁 Full Restoration
+
+> ⚠️ **Quit ComfyUI before proceeding!**
+
+### 🐧 Linux / macOS
+
+1. Open terminal in **`ComfyUI/` directory**
+2. Paste the displayed command (example):
+   ```bash
+   ./custom_nodes/ComfyUI_FMJ_SaveImageVersions/restore_snapshot.sh "output/my_project_20251231_100000_00.snapshot.txt"
+   ```
+3. **Follow instructions**:
+   - Script activates the `venv`
+   - Compares versions
+   - Asks for confirmation before each action
+4. **Restart ComfyUI**
+
+### 🪟 Windows
+
+1. Open **CMD** or **PowerShell** in **`ComfyUI/` directory**
+2. Paste the command (example):
+   ```cmd
+   custom_nodes\ComfyUI_FMJ_SaveImageVersions\restore_snapshot.bat "output\my_project_20251231_100000_00.snapshot.txt"
+   ```
+3. **Follow instructions**  
+   > 💡 For complete custom nodes restoration, use **WSL** with the Linux script.
+
+---
+
+## ⚙️ Requirements
+
+- **Python venv** in `ComfyUI/venv`  
+  → If missing, create it:
+  ```bash
+  cd ComfyUI
+  python -m venv venv
+  # Activate it, then install ComfyUI dependencies
+  ```
+
+- **Git** installed (for commit restoration)
+
+- **Execute permissions** (Linux/macOS):
+  ```bash
+  chmod +x custom_nodes/ComfyUI_FMJ_SaveImageVersions/restore_snapshot.sh
+  ```
+
+---
+
+## ❓ FAQ
+
+### ❓ *Load node can't find `.snapshot.txt`?*
+→ Ensure **PNG and snapshot filenames match exactly** (only extension differs).
+
+### ❓ *Error "venv not found"?*
+→ Create a venv in `ComfyUI/venv` **before** saving or restoring.
+
+### ❓ *Want to disable snapshot for speed?*
+→ Uncheck `save_snapshot` in the Save node.
+
+### ❓ *Restoration fails due to version mismatch?*
+→ The script **asks for confirmation**. If you're sure, answer **`o`**.
+
+---
+
+## 📜 License
+
+MIT — use, modify, and share freely.
+
+---
+
+## 🙏 Acknowledgements
+
+Thanks to the ComfyUI community for the inspiration!  
+This project makes creation truly **reproducible**. 🎨
+
+---
+
+> ✨ **Pro Tip**: Archive your `output/*.png` + `*.snapshot.txt` files in a project folder — you can **return to any generation** even 5 years later!
