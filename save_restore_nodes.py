@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import torch
 import numpy as np
 from PIL import Image, PngImagePlugin
@@ -12,6 +13,27 @@ import folder_paths
 # Détection de l'OS
 IS_WINDOWS = os.name == "nt"
 
+def sanitize_filename(name: str, default: str = "image") -> str:
+    """
+    Nettoie une chaîne pour en faire un nom de fichier sûr.
+    - Supprime les chemins relatifs ou absolus avec os.path.basename
+    - Ne conserve que lettres, chiffres, underscores, tirets, points
+    - Évite les noms vides ou qui commencent par un point
+    - Limite à 255 caractères (limite courante des systèmes de fichiers)
+    """
+    if not isinstance(name, str):
+        name = str(name)
+    # Supprime tout ce qui ressemble à un chemin
+    base = os.path.basename(name)
+    # Autorise uniquement les caractères sûrs
+    safe = re.sub(r'[^\w\-_.]', '_', base)
+    # Gère les cas limites
+    if not safe or safe.startswith(".") or safe.strip() == "":
+        safe = default
+    # Tronque si trop long
+    return safe[:255]
+
+
 # ======================
 # SAVE NODE
 # ======================
@@ -23,7 +45,7 @@ class FMJ_SaveImageWithSnapshot:
                 "images": ("IMAGE",),
                 "positive": ("STRING", {"default": "", "multiline": False}),
                 "negative": ("STRING", {"default": "", "multiline": False}),
-                "filename_prefix": ("STRING", {"default": "fmj"}),
+                "filename_prefix": ("STRING", {"default": "fmj", "multiline": False}),
                 "save_snapshot": ("BOOLEAN", {"default": True}),
             },
             "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"},
@@ -44,11 +66,21 @@ class FMJ_SaveImageWithSnapshot:
         script_dir = Path(__file__).parent
         snapshot_script = script_dir / "snapshot.py"
 
+        # Sanitise le préfixe fourni par l'utilisateur
+        safe_prefix = sanitize_filename(filename_prefix, default="fmj")
+        # Résout le répertoire de sortie en chemin absolu pour la vérification
+        output_dir_abs = os.path.abspath(output_dir)
+
         for idx, image in enumerate(images):
-            i = 255.0 * image.cpu().numpy()
+            i = 255. * image.cpu().numpy()
             img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
-            png_name = f"{filename_prefix}_{timestamp}_{idx:02}.png"
+            png_name = f"{safe_prefix}_{timestamp}_{idx:02}.png"
             png_path = os.path.join(output_dir, png_name)
+            png_path_abs = os.path.abspath(png_path)
+
+            # Vérification de sécurité : s'assurer que le chemin cible est bien dans output_dir
+            if not png_path_abs.startswith(output_dir_abs + os.sep):
+                raise ValueError("Security check failed: output path attempted to escape output directory.")
 
             metadata = PngImagePlugin.PngInfo()
             if extra_pnginfo:
@@ -57,7 +89,7 @@ class FMJ_SaveImageWithSnapshot:
             metadata.add_text("positive", positive)
             metadata.add_text("negative", negative)
 
-            img.save(png_path, pnginfo=metadata, compress_level=4)
+            img.save(png_path_abs, pnginfo=metadata, compress_level=4)
 
             if save_snapshot:
                 if snapshot_script.exists():
@@ -68,10 +100,16 @@ class FMJ_SaveImageWithSnapshot:
 
                 global_snapshot = comfy_root / "comfyui_snapshot.txt"
                 if global_snapshot.is_file():
-                    txt_name = f"{filename_prefix}_{timestamp}_{idx:02}.snapshot.txt"
-                    txt_path = Path(output_dir) / txt_name
+                    txt_name = f"{safe_prefix}_{timestamp}_{idx:02}.snapshot.txt"
+                    txt_path_abs = os.path.join(output_dir_abs, txt_name)
+
+                    # Vérification de sécurité supplémentaire pour le snapshot
+                    if not txt_path_abs.startswith(output_dir_abs + os.sep):
+                        raise ValueError("Security check failed: snapshot path attempted to escape output directory.")
+
                     try:
-                        txt_path.write_bytes(global_snapshot.read_bytes())
+                        with open(global_snapshot, 'rb') as src, open(txt_path_abs, 'wb') as dst:
+                            dst.write(src.read())
                         print(f"✅ Snapshot copié : {txt_name}")
                     except Exception as e:
                         print(f"❌ Erreur copie : {e}")
@@ -105,7 +143,17 @@ class FMJ_LoadImageWithSnapshot:
     CATEGORY = "🌀FMJ"
 
     def load(self, image):
+        # Assure-toi que 'image' est un simple nom de fichier (sans chemin)
+        image = os.path.basename(image)
+        if not image.endswith(".png"):
+            raise ValueError("Invalid image file extension.")
+
         image_path = folder_paths.get_annotated_filepath(image)
+        # Vérification supplémentaire : le chemin doit être dans le répertoire d'entrée
+        input_dir_abs = os.path.abspath(folder_paths.get_input_directory())
+        if not os.path.abspath(image_path).startswith(input_dir_abs + os.sep):
+            raise ValueError("Attempted to load image outside input directory.")
+
         img = Image.open(image_path).convert("RGB")
         img_tensor = torch.from_numpy(np.array(img).astype(np.float32) / 255.0)[None,]
 
@@ -115,6 +163,7 @@ class FMJ_LoadImageWithSnapshot:
         negative = meta.get("negative", "")
 
         image_stem = Path(image).stem
+        # Le stem est déjà sécurisé car 'image' vient d'une liste filtrée + basename
         output_dir = Path(folder_paths.get_output_directory())
         snapshot_path = output_dir / f"{image_stem}.snapshot.txt"
 
