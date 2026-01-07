@@ -2,18 +2,12 @@
 import sys
 import subprocess
 from pathlib import Path
+import hashlib
+from security_utils import safe_run_git
 
-def git(cmd, cwd):
-    try:
-        return subprocess.check_output(
-            f"git {cmd}",
-            shell=True,
-            cwd=cwd,
-            stderr=subprocess.DEVNULL,
-            text=True
-        ).strip()
-    except:
-        return None
+def git(cmd_args, cwd):
+    # wrapper kept for compatibility with older calls; expects list of args
+    return safe_run_git(cmd_args, cwd)
 
 # Trouver la racine de ComfyUI (doit contenir main.py)
 script_dir = Path(__file__).resolve().parent
@@ -48,8 +42,8 @@ except ImportError:
 lines.append("")
 
 # ComfyUI core
-core_commit = git("rev-parse HEAD", comfyui_root)
-core_remote = git("remote get-url origin", comfyui_root) or "https://github.com/comfyanonymous/ComfyUI.git"
+core_commit = git(["rev-parse", "HEAD"], comfyui_root)
+core_remote = git(["remote", "get-url", "origin"], comfyui_root) or "https://github.com/comfyanonymous/ComfyUI.git"
 lines.append(f"ComfyUI {core_commit or 'unknown'} {core_remote}")
 lines.append("")
 
@@ -58,8 +52,8 @@ custom_nodes = comfyui_root / "custom_nodes"
 if custom_nodes.is_dir():
     for node_dir in sorted(custom_nodes.iterdir()):
         if node_dir.is_dir():
-            commit = git("rev-parse HEAD", node_dir)
-            remote = git("remote get-url origin", node_dir)
+            commit = git(["rev-parse", "HEAD"], node_dir)
+            remote = git(["remote", "get-url", "origin"], node_dir)
             if commit and remote:
                 lines.append(f"{node_dir.name} {commit} {remote}")
             elif commit:
@@ -67,5 +61,8 @@ if custom_nodes.is_dir():
 
 # Écrire dans la racine
 output = comfyui_root / "comfyui_snapshot.txt"
-output.write_text("\n".join(lines) + "\n", encoding="utf-8")
-print(f"✅ Snapshot sauvegardé : {output}")
+try:
+    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"✅ Snapshot sauvegardé : {output}")
+except OSError as e:
+    print(f"❌ Impossible d'écrire le snapshot : {e}")
