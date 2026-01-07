@@ -1,0 +1,46 @@
+Voici comment exécuter et vérifier les tests du fichier tests/test_security_utils.py, pas à pas, avec commandes et solutions aux erreurs courantes.
+
+Pré‑requis
+
+    Python 3.x installé.
+    git installé (le test safe_run_git suppose que git est disponible sur le PATH, mais le test vérifie un dossier sans repo donc il s’attend à None).
+    Un terminal et accès au dépôt local (placez‑vous à la racine du repo).
+
+    Activez votre environnement virtuel (si vous en utilisez un)
+
+    Linux/macOS:
+        source venv/bin/activate
+    Windows (cmd):
+        venv\Scripts\activate.bat
+    Windows (PowerShell):
+        .\venv\Scripts\Activate.ps1
+
+    Installer pytest (si nécessaire)
+
+    pip install pytest
+
+    Exécuter les tests (depuis la racine du dépôt)
+
+    Pour lancer uniquement ce fichier de tests :
+        pytest -q tests/test_security_utils.py
+    Pour lancer et afficher plus d’informations :
+        pytest -v tests/test_security_utils.py
+    Pour exécuter un seul test précis, par exemple test_sha256_of_file :
+        pytest -q tests/test_security_utils.py::test_sha256_of_file
+
+    Interpréter les résultats
+
+    Sortie verte/OK et code de retour 0 : tous les tests passent.
+    Si un test échoue, pytest affiche la traceback et l’assertion qui a échoué ; lisez le message d’erreur et la portion de code indiquée.
+    Pour voir la sortie complète (captures stdout/stderr) en cas de debug :
+        pytest -s tests/test_security_utils.py
+
+    Exemples de commandes utiles
+
+    Lancer tous les tests du repo :
+        pytest -q
+    Lancer avec coverage (couverture) :
+        pip install coverage
+        coverage run -m pytest -q
+        coverage report -m
+
