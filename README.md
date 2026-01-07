@@ -1,163 +1,131 @@
 ```markdown
 # ComfyUI_FMJ_SaveImageVersions
 
-Sauvegarde d’images avec métadonnées complètes (prompt, workflow, versions logicielles, commit)
+Save images with full metadata (prompt, workflow, software versions, commit)
 
-Ce dépôt fournit des nœuds ComfyUI pour :
-- Sauvegarder des images en PNG avec métadonnées (positive / negative prompt, autres champs JSON),
-- Générer et copier un snapshot décrivant l’environnement (commits, versions, GPU, etc.),
-- Charger une image et restaurer des informations depuis ses métadonnées.
+This repository provides ComfyUI nodes to:
+- Save PNG images with embedded metadata (positive / negative prompts and other JSON fields),
+- Generate and copy a snapshot describing the environment (commits, versions, GPU, etc.),
+- Load an image and restore information from its metadata.
 
-Important : ce projet exécute localement un petit script `snapshot.py` pour capturer l’état du dépôt ComfyUI et des nœuds personnalisés. Ne l’exécutez que sur des environnements de confiance.
+Important: this project runs a local script `snapshot.py` to capture the state of ComfyUI and custom nodes. Only run it in trusted environments.
 
 ---
 
-## Sommaire rapide
+## Quick summary
 
-- Installation (Manager ou manuelle)
-- Utilisation (nœuds ComfyUI)
+- Installation (Manager or manual)
+- Usage (ComfyUI nodes)
 - Tests (pytest)
-- Sécurité & recommandations
+- Security & recommendations
 - Contribution & releases
-- Licence
+- License
 
 ---
 
 ## Installation
 
-Deux méthodes possibles : via ComfyUI Manager (si disponible dans votre version) ou manuelle.
+Two options: via the ComfyUI Manager (if available) or by manual install.
 
 ### 1) Via ComfyUI Manager (UI)
-1. Ouvrez ComfyUI et allez dans l'onglet Manager / Plugins.
-2. Choisissez « Install from Git repository » ou « Install from URL ».
-3. Entrez l'URL du dépôt :
+1. Open ComfyUI and go to the Manager / Plugins tab.
+2. Choose “Install from Git repository” or “Install from URL”.
+3. Enter the repository URL:
    ```
    https://github.com/bulldog68/ComfyUI_FMJ_SaveImageVersions
    ```
-4. Si le Manager vous propose une branche ou un sous-dossier, indiquez la branche souhaitée (par défaut `main`) et laissez le sous-dossier vide si les nœuds sont à la racine du repo.
-5. Installez et redémarrez ComfyUI si nécessaire.
+4. If the Manager asks for a branch or subdirectory, specify the desired branch (default `main`) and leave the subdirectory empty if nodes are at the repo root.
+5. Install and restart ComfyUI if required.
 
-> Remarque : les implémentations du "Manager" peuvent varier selon la version de ComfyUI. Si l'option d'installation directe n'est pas disponible, utilisez la méthode manuelle ci‑dessous.
+> Note: Manager implementations vary between ComfyUI versions. If direct install is not available, use the manual method below.
 
-### 2) Installation manuelle (fiable)
-Depuis la racine de votre installation ComfyUI :
+### 2) Manual installation (reliable)
+From your ComfyUI installation root:
 ```bash
-cd /chemin/vers/ComfyUI/custom_nodes
+cd /path/to/ComfyUI/custom_nodes
 git clone https://github.com/bulldog68/ComfyUI_FMJ_SaveImageVersions
 ```
-Puis redémarrez ComfyUI.
+Then restart ComfyUI.
 
 ---
 
-## Dépendances
+## Dependencies
 
 - Python 3.8+
 - Pillow
 - numpy
-- (optionnel) torch si vous utilisez des fonctions dépendantes de PyTorch
+- (optional) torch if you use features that depend on PyTorch
 
-Installer rapidement les dépendances usuelles :
+Quick install for usual dependencies:
 ```bash
 pip install pillow numpy
-# pour les tests
+# for tests
 pip install pytest
 ```
 
 ---
 
-## Utilisation
+## Usage
 
-Après installation, les nœuds disponibles sont (exemples de noms) :
-- `FMJ_SaveImagesWithSnapshot` — sauver des images avec métadonnées et option snapshot
-- `FMJ_LoadImageWithSnapshot` — charger une image et lire ses métadonnées
+After installation, available nodes include (example names):
+- `FMJ_SaveImagesWithSnapshot` — save images with metadata and optional snapshot
+- `FMJ_LoadImageWithSnapshot` — load an image and read its metadata
 
-Flux basique (Save node) :
-1. Configurez le répertoire de sortie via ComfyUI (folder_paths).
-2. Dans le nœud `FMJ_SaveImagesWithSnapshot`, fournissez :
-   - `images` (tensors depuis le graph),
-   - `filename_prefix` (sera sanitizé),
+Basic flow for the Save node:
+1. Configure the output directory using ComfyUI (folder_paths).
+2. In `FMJ_SaveImagesWithSnapshot`, provide:
+   - `images` (tensors from the graph),
+   - `filename_prefix` (will be sanitized),
    - `positive` / `negative` (prompts),
-   - `extra_pnginfo` (dictionnaire facultatif),
+   - `extra_pnginfo` (optional dictionary),
    - `save_snapshot` (bool).
-3. Le nœud écrit un PNG et, si activé, exécute `snapshot.py` et copie `comfyui_snapshot.txt` dans le dossier de sortie.
+3. The node writes a PNG and, if enabled, runs `snapshot.py` and copies `comfyui_snapshot.txt` into the output folder.
 
-Load node : lit les métadonnées PNG si présentes et retourne `image, positive, negative, config_info, restore_command`.
+Load node: reads PNG metadata if present and returns `image, positive, negative, config_info, restore_command`.
 
 ---
 
 ## Tests
 
-Un petit jeu de tests pytest est fourni pour les utilitaires de sécurité.
+A small pytest suite is included for the security utilities.
 
-Exécuter les tests depuis la racine du dépôt ComfyUI (ou en précisant PYTHONPATH) :
+Run the tests from the repository (or by setting PYTHONPATH):
 
-Option A — lancer depuis le dossier du package :
+Option A — run from the package folder:
 ```bash
 cd custom_nodes/ComfyUI_FMJ_SaveImageVersions
 PYTHONPATH=. pytest -q tests/test_security_utils.py
 ```
 
-Option B — lancer depuis la racine du repo ComfyUI (ajuster le chemin) :
+Option B — run from the ComfyUI repo root (adjust the path):
 ```bash
 PYTHONPATH=custom_nodes/ComfyUI_FMJ_SaveImageVersions pytest -q custom_nodes/ComfyUI_FMJ_SaveImageVersions/tests/test_security_utils.py
 ```
 
-Les tests vérifient :
-- la robustesse de la vérification de chemins (`is_within_directory`)
-- le comportement de `safe_run_git` dans un dossier sans dépôt
-- le calcul SHA256 d’un fichier
+The tests cover:
+- robustness of path checks (`is_within_directory`)
+- `safe_run_git` behavior in a folder without a git repo
+- SHA256 computation for files
 
-> Si vous exécutez les tests sur Windows, le test de symlink est ignoré par défaut (nécessite des permissions élevées).
-
----
-
-## Sécurité — points importants
-
-J’ai appliqué plusieurs corrections visant la sécurité. En résumé :
-
-- Remplacement des appels git utilisant `shell=True` par des appels sûrs via `subprocess.run([...])` (module `security_utils.safe_run_git`).
-- Vérification robuste des chemins de sortie : utilisation de `os.path.realpath` + `os.path.commonpath` (fonction `is_within_directory`) pour empêcher path traversal et attaques via symlink.
-- Journalisation de l’empreinte SHA256 du script `snapshot.py` avant exécution (audit).
-- Gestion d’exceptions plus spécifique (éviter `except:` bare).
-- Limites sur la taille des métadonnées PNG ajoutées (pour éviter l’abus ou les attaques par payload volumineux).
-- Validation attendue côté restore : si des valeurs du snapshot sont utilisées pour exécuter des commandes (ex. commits, scripts), validez strictement le format (p.ex. SHA hexadécimal via regex) avant utilisation.
-
-Recommandations d’exploitation :
-- Exécutez `snapshot.py` et la copie du snapshot uniquement dans des environnements de confiance.
-- Restreignez les permissions du dossier `custom_nodes` et du dossier de sortie (ne laissez pas d’écritures publiques sur ces dossiers).
-- Évitez d’inclure des secrets dans les métadonnées ou dans `comfyui_snapshot.txt`.
-- Pour durcir davantage, considérez de stocker une empreinte attendue (sha256) pour `snapshot.py` et refuser l’exécution si elle diffère.
+> On Windows, the symlink test is skipped by default (symlink creation may require elevated privileges).
 
 ---
 
-## Debug / Résolution de problèmes courants
+## Security — key points
 
-- ComfyUI affiche `IMPORT FAILED` pour le dossier du nœud :
-  - Ouvrez ComfyUI depuis un terminal pour voir la traceback complète : `python main.py` ou `./run.sh`.
-  - Vérifiez la présence de `security_utils.py` et l’absence d’erreurs de syntaxe :
-    ```bash
-    python -m py_compile custom_nodes/ComfyUI_FMJ_SaveImageVersions/*.py
-    ```
-  - Assurez-vous que les imports relatifs sont robustes (le code fourni contient des fallbacks).
+Several security improvements were applied. In short:
 
-- Tests pytest ne trouvent pas `security_utils` :
-  - Exécutez les tests depuis le dossier du package ou ajoutez le package au PYTHONPATH. Voir la section Tests ci‑dessus.
+- Replaced git calls that used `shell=True` with safe `subprocess.run([...])` calls (`security_utils.safe_run_git`).
+- Robust output path checks: uses `os.path.realpath` + `os.path.commonpath` (`is_within_directory`) to prevent path traversal and symlink-based attacks.
+- Logs the SHA256 of `snapshot.py` before executing it (for audit).
+- More specific exception handling (avoid bare `except:`).
+- Limits on PNG metadata sizes (to avoid abuse or very large payloads).
+- When restoring from the snapshot, strictly validate any values used to construct commands (e.g., validate commit SHAs with a hex regex) before using them.
 
----
-
-## Fichiers importants
-
-- `save_restore_nodes.py` — nœuds ComfyUI principaux (save & load)
-- `snapshot.py` — génération du fichier `comfyui_snapshot.txt`
-- `security_utils.py` — utilitaires : safe_run_git, is_within_directory, sha256_of_file
-- `tests/test_security_utils.py` — tests unitaires
-- `pyproject.toml` — metadata (section `[tool.comfy]` utilisée par certains managers)
+Operational recommendations:
+- Only execute `snapshot.py` and copy snapshots on trusted systems.
+- Restrict write permissions for the `custom_nodes` folder and the outputs folder — do not allow untrusted users to overwrite scripts.
+- Do not include secrets in PNG metadata or `comfyui_snapshot.txt`.
+- For stronger protection, consider keeping an expected SHA256 hash for `snapshot.py` and refusing execution if it differs.
 
 ---
-
-## Licence
-
-Voir le fichier `LICENSE` dans le dépôt pour les détails de la licence.
-
-Dites‑moi quelle action suivante vous souhaitez.
-```
