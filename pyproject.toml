@@ -1,7 +1,7 @@
 [project]
 name = "ComfyUI_FMJ_SaveImageVersions"
 description = "Sauvegarde d’images avec métadonnées complètes (prompt, Workflow, versions logicielles, commit)"
-version = "1.0.2"
+version = "1.0.4"
 license = { file = "LICENSE" }
 dependencies = [""]
 
