@@ -1,188 +1,163 @@
-# 📦 ComfyUI_FMJ_SaveImageVersions
+```markdown
+# ComfyUI_FMJ_SaveImageVersions
 
-**Advanced image saving with full environment snapshot & reproducible restoration**  
-*By FMJ — December 2025*
+Sauvegarde d’images avec métadonnées complètes (prompt, workflow, versions logicielles, commit)
 
----
+Ce dépôt fournit des nœuds ComfyUI pour :
+- Sauvegarder des images en PNG avec métadonnées (positive / negative prompt, autres champs JSON),
+- Générer et copier un snapshot décrivant l’environnement (commits, versions, GPU, etc.),
+- Charger une image et restaurer des informations depuis ses métadonnées.
 
-## 🔧 Features
-
-✅ **Smart Saving**:
-- PNG with **embedded workflow** (just like official `SaveImage`)
-- **Positive/negative prompts** stored in PNG metadata
-- Automatic **environment snapshot** (Python, PyTorch, CUDA, Git commits)
-
-✅ **Reproducible Restoration**:
-- Recreate **exact environment** from just a PNG + `.snapshot.txt`
-- Interactive restoration script (Linux/macOS/Windows)
-- Version verification + user confirmation
-
-✅ **ComfyUI Integration**:
-- **Save node** with option to disable snapshot
-- **Load node** that extracts prompts, config, and provides restore command
+Important : ce projet exécute localement un petit script `snapshot.py` pour capturer l’état du dépôt ComfyUI et des nœuds personnalisés. Ne l’exécutez que sur des environnements de confiance.
 
 ---
 
-## 📁 File Structure
+## Sommaire rapide
 
+- Installation (Manager ou manuelle)
+- Utilisation (nœuds ComfyUI)
+- Tests (pytest)
+- Sécurité & recommandations
+- Contribution & releases
+- Licence
+
+---
+
+## Installation
+
+Deux méthodes possibles : via ComfyUI Manager (si disponible dans votre version) ou manuelle.
+
+### 1) Via ComfyUI Manager (UI)
+1. Ouvrez ComfyUI et allez dans l'onglet Manager / Plugins.
+2. Choisissez « Install from Git repository » ou « Install from URL ».
+3. Entrez l'URL du dépôt :
+   ```
+   https://github.com/bulldog68/ComfyUI_FMJ_SaveImageVersions
+   ```
+4. Si le Manager vous propose une branche ou un sous-dossier, indiquez la branche souhaitée (par défaut `main`) et laissez le sous-dossier vide si les nœuds sont à la racine du repo.
+5. Installez et redémarrez ComfyUI si nécessaire.
+
+> Remarque : les implémentations du "Manager" peuvent varier selon la version de ComfyUI. Si l'option d'installation directe n'est pas disponible, utilisez la méthode manuelle ci‑dessous.
+
+### 2) Installation manuelle (fiable)
+Depuis la racine de votre installation ComfyUI :
 ```bash
-ComfyUI/
-└── custom_nodes/
-    └── ComfyUI_FMJ_SaveImageVersions/
-        ├── __init__.py
-        ├── save_restore_nodes.py   # ComfyUI nodes
-        ├── snapshot.py             # Environment snapshot generator
-        ├── restore_snapshot.sh     # Linux/macOS restore script
-        └── restore_snapshot.bat    # Windows restore script
+cd /chemin/vers/ComfyUI/custom_nodes
+git clone https://github.com/bulldog68/ComfyUI_FMJ_SaveImageVersions
+```
+Puis redémarrez ComfyUI.
+
+---
+
+## Dépendances
+
+- Python 3.8+
+- Pillow
+- numpy
+- (optionnel) torch si vous utilisez des fonctions dépendantes de PyTorch
+
+Installer rapidement les dépendances usuelles :
+```bash
+pip install pillow numpy
+# pour les tests
+pip install pytest
 ```
 
 ---
 
-## 🚀 Installation
+## Utilisation
 
-1. **Create the folder** `ComfyUI/custom_nodes/ComfyUI_FMJ_SaveImageVersions/`
+Après installation, les nœuds disponibles sont (exemples de noms) :
+- `FMJ_SaveImagesWithSnapshot` — sauver des images avec métadonnées et option snapshot
+- `FMJ_LoadImageWithSnapshot` — charger une image et lire ses métadonnées
 
-2. **Place these files** inside:
-   - [`__init__.py`](#initpy)
-   - [`save_restore_nodes.py`](#save_restore_nodespy)
-   - [`snapshot.py`](#snapshotpy)
-   - [`restore_snapshot.sh`](#restore_snapshotsh)
-   - [`restore_snapshot.bat`](#restore_snapshotbat)
+Flux basique (Save node) :
+1. Configurez le répertoire de sortie via ComfyUI (folder_paths).
+2. Dans le nœud `FMJ_SaveImagesWithSnapshot`, fournissez :
+   - `images` (tensors depuis le graph),
+   - `filename_prefix` (sera sanitizé),
+   - `positive` / `negative` (prompts),
+   - `extra_pnginfo` (dictionnaire facultatif),
+   - `save_snapshot` (bool).
+3. Le nœud écrit un PNG et, si activé, exécute `snapshot.py` et copie `comfyui_snapshot.txt` dans le dossier de sortie.
 
-3. **Restart ComfyUI**
-
-4. **Verify** nodes appear in ComfyUI:
-   - **"Save Image + Snapshot (FMJ)"**
-   - **"Load Image + Snapshot (FMJ)"**
+Load node : lit les métadonnées PNG si présentes et retourne `image, positive, negative, config_info, restore_command`.
 
 ---
 
-### `__init__.py`
-```python
-from .save_restore_nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS
+## Tests
+
+Un petit jeu de tests pytest est fourni pour les utilitaires de sécurité.
+
+Exécuter les tests depuis la racine du dépôt ComfyUI (ou en précisant PYTHONPATH) :
+
+Option A — lancer depuis le dossier du package :
+```bash
+cd custom_nodes/ComfyUI_FMJ_SaveImageVersions
+PYTHONPATH=. pytest -q tests/test_security_utils.py
 ```
 
-### `save_restore_nodes.py`
-→ [Get the complete file here](#complete-save_restore_nodespy-file)
+Option B — lancer depuis la racine du repo ComfyUI (ajuster le chemin) :
+```bash
+PYTHONPATH=custom_nodes/ComfyUI_FMJ_SaveImageVersions pytest -q custom_nodes/ComfyUI_FMJ_SaveImageVersions/tests/test_security_utils.py
+```
 
-### `snapshot.py`
-→ Use your existing version that generates `comfyui_snapshot.txt`  
-(The version provided in conversation history works)
+Les tests vérifient :
+- la robustesse de la vérification de chemins (`is_within_directory`)
+- le comportement de `safe_run_git` dans un dossier sans dépôt
+- le calcul SHA256 d’un fichier
 
----
-
-## 🖼️ Usage — Saving
-
-1. In your workflow, replace `SaveImage` with **"Save Image + Snapshot (FMJ)"**
-
-2. **Configure**:
-   - `positive`: your positive prompt
-   - `negative`: your negative prompt
-   - `filename_prefix`: file prefix (e.g., `"my_project"`)
-   - `save_snapshot`: ✅ checked (uncheck to disable)
-
-3. **Execute** → in `output/`, you'll get:
-   ```
-   my_project_20251231_100000_00.png
-   my_project_20251231_100000_00.snapshot.txt
-   ```
-
-> 💡 The PNG contains the **workflow** and **prompts** → directly loadable in ComfyUI.
+> Si vous exécutez les tests sur Windows, le test de symlink est ignoré par défaut (nécessite des permissions élevées).
 
 ---
 
-## 📂 Usage — Loading
+## Sécurité — points importants
 
-1. **Copy** `.png` + `.snapshot.txt` files to `input/` *(optional but useful)*
+J’ai appliqué plusieurs corrections visant la sécurité. En résumé :
 
-2. Use **"Load Image + Snapshot (FMJ)"**:
-   - Connect `positive` / `negative` to your `CLIP Text Encode` nodes
-   - Connect `config_info` to a `ShowText` node to view environment
-   - Connect `restore_command` to a `ShowText` node → you'll see:
+- Remplacement des appels git utilisant `shell=True` par des appels sûrs via `subprocess.run([...])` (module `security_utils.safe_run_git`).
+- Vérification robuste des chemins de sortie : utilisation de `os.path.realpath` + `os.path.commonpath` (fonction `is_within_directory`) pour empêcher path traversal et attaques via symlink.
+- Journalisation de l’empreinte SHA256 du script `snapshot.py` avant exécution (audit).
+- Gestion d’exceptions plus spécifique (éviter `except:` bare).
+- Limites sur la taille des métadonnées PNG ajoutées (pour éviter l’abus ou les attaques par payload volumineux).
+- Validation attendue côté restore : si des valeurs du snapshot sont utilisées pour exécuter des commandes (ex. commits, scripts), validez strictement le format (p.ex. SHA hexadécimal via regex) avant utilisation.
 
-     ```text
-     # 📌 Open a terminal in the ComfyUI directory, then copy-paste this line:
-     # ⚠️  Quit ComfyUI before starting restoration!
-     ./custom_nodes/ComfyUI_FMJ_SaveImageVersions/restore_snapshot.sh "output/my_project_20251231_100000_00.snapshot.txt"
-     ```
-
----
-
-## 🔁 Full Restoration
-
-> ⚠️ **Quit ComfyUI before proceeding!**
-
-### 🐧 Linux / macOS
-
-1. Open terminal in **`ComfyUI/` directory**
-2. Paste the displayed command (example):
-   ```bash
-   ./custom_nodes/ComfyUI_FMJ_SaveImageVersions/restore_snapshot.sh "output/my_project_20251231_100000_00.snapshot.txt"
-   ```
-3. **Follow instructions**:
-   - Script activates the `venv`
-   - Compares versions
-   - Asks for confirmation before each action
-4. **Restart ComfyUI**
-
-### 🪟 Windows
-
-1. Open **CMD** or **PowerShell** in **`ComfyUI/` directory**
-2. Paste the command (example):
-   ```cmd
-   custom_nodes\ComfyUI_FMJ_SaveImageVersions\restore_snapshot.bat "output\my_project_20251231_100000_00.snapshot.txt"
-   ```
-3. **Follow instructions**  
-   > 💡 For complete custom nodes restoration, use **WSL** with the Linux script.
+Recommandations d’exploitation :
+- Exécutez `snapshot.py` et la copie du snapshot uniquement dans des environnements de confiance.
+- Restreignez les permissions du dossier `custom_nodes` et du dossier de sortie (ne laissez pas d’écritures publiques sur ces dossiers).
+- Évitez d’inclure des secrets dans les métadonnées ou dans `comfyui_snapshot.txt`.
+- Pour durcir davantage, considérez de stocker une empreinte attendue (sha256) pour `snapshot.py` et refuser l’exécution si elle diffère.
 
 ---
 
-## ⚙️ Requirements
+## Debug / Résolution de problèmes courants
 
-- **Python venv** in `ComfyUI/venv`  
-  → If missing, create it:
-  ```bash
-  cd ComfyUI
-  python -m venv venv
-  # Activate it, then install ComfyUI dependencies
-  ```
+- ComfyUI affiche `IMPORT FAILED` pour le dossier du nœud :
+  - Ouvrez ComfyUI depuis un terminal pour voir la traceback complète : `python main.py` ou `./run.sh`.
+  - Vérifiez la présence de `security_utils.py` et l’absence d’erreurs de syntaxe :
+    ```bash
+    python -m py_compile custom_nodes/ComfyUI_FMJ_SaveImageVersions/*.py
+    ```
+  - Assurez-vous que les imports relatifs sont robustes (le code fourni contient des fallbacks).
 
-- **Git** installed (for commit restoration)
-
-- **Execute permissions** (Linux/macOS):
-  ```bash
-  chmod +x custom_nodes/ComfyUI_FMJ_SaveImageVersions/restore_snapshot.sh
-  ```
+- Tests pytest ne trouvent pas `security_utils` :
+  - Exécutez les tests depuis le dossier du package ou ajoutez le package au PYTHONPATH. Voir la section Tests ci‑dessus.
 
 ---
 
-## ❓ FAQ
+## Fichiers importants
 
-### ❓ *Load node can't find `.snapshot.txt`?*
-→ Ensure **PNG and snapshot filenames match exactly** (only extension differs).
-
-### ❓ *Error "venv not found"?*
-→ Create a venv in `ComfyUI/venv` **before** saving or restoring.
-
-### ❓ *Want to disable snapshot for speed?*
-→ Uncheck `save_snapshot` in the Save node.
-
-### ❓ *Restoration fails due to version mismatch?*
-→ The script **asks for confirmation**. If you're sure, answer **`o`**.
+- `save_restore_nodes.py` — nœuds ComfyUI principaux (save & load)
+- `snapshot.py` — génération du fichier `comfyui_snapshot.txt`
+- `security_utils.py` — utilitaires : safe_run_git, is_within_directory, sha256_of_file
+- `tests/test_security_utils.py` — tests unitaires
+- `pyproject.toml` — metadata (section `[tool.comfy]` utilisée par certains managers)
 
 ---
 
-## 📜 License
+## Licence
 
-MIT — use, modify, and share freely.
+Voir le fichier `LICENSE` dans le dépôt pour les détails de la licence.
 
----
-
-## 🙏 Acknowledgements
-
-Thanks to the ComfyUI community for the inspiration!  
-This project makes creation truly **reproducible**. 🎨
-
----
-
-> ✨ **Pro Tip**: Archive your `output/*.png` + `*.snapshot.txt` files in a project folder — you can **return to any generation** even 5 years later!
+Dites‑moi quelle action suivante vous souhaitez.
+```
