@@ -1,169 +1,204 @@
 #!/bin/bash
 # restore_snapshot.sh
-# Usage: ./restore_snapshot.sh "chemin/vers/fichier.snapshot.txt"
+# Installe les dépendances uniquement pour les nodes qui ont été :
+#   - clonés OU
+#   - mis à jour (checkout d'un nouveau commit)
 
 set -e
 
-# === Gestion du fichier snapshot ===
 SNAPSHOT_FILE="$1"
-if [ -z "$SNAPSHOT_FILE" ]; then
-    echo "❌ Usage: $0 \"<chemin/vers/fichier.snapshot.txt>\""
-    exit 1
-fi
+[ -z "$SNAPSHOT_FILE" ] && { echo "❌ Usage: $0 <snapshot.txt>"; exit 1; }
+[[ "$SNAPSHOT_FILE" != /* ]] && SNAPSHOT_FILE="$(pwd)/$SNAPSHOT_FILE"
+[ ! -f "$SNAPSHOT_FILE" ] && { echo "❌ Fichier introuvable : $SNAPSHOT_FILE"; exit 1; }
 
-# Convertir en chemin absolu si relatif
-if [[ "$SNAPSHOT_FILE" != /* ]]; then
-    SNAPSHOT_FILE="$(pwd)/$SNAPSHOT_FILE"
-fi
-
-if [ ! -f "$SNAPSHOT_FILE" ]; then
-    echo "❌ Fichier introuvable : $SNAPSHOT_FILE"
-    exit 1
-fi
-
-# === Détection racine ComfyUI (2 niveaux au lieu de 3) ===
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-COMFYUI_ROOT="$SCRIPT_DIR/../.."
-COMFYUI_ROOT="$(realpath "$COMFYUI_ROOT")"
+COMFYUI_ROOT="$(realpath "$SCRIPT_DIR/../..")"
+CUSTOM_NODES_DIR="$COMFYUI_ROOT/custom_nodes"
 
-echo "📁 Racine ComfyUI : $COMFYUI_ROOT"
+VENV_DIR="$COMFYUI_ROOT/venv"
+[ ! -d "$VENV_DIR" ] && { echo "❌ venv manquant : $VENV_DIR"; exit 1; }
+
+echo "📁 ComfyUI : $COMFYUI_ROOT"
 echo "📄 Snapshot : $SNAPSHOT_FILE"
 echo
 
-# === Activation du venv ===
-VENV_DIR="$COMFYUI_ROOT/venv"
-if [ ! -d "$VENV_DIR" ]; then
-    echo "❌ Dossier venv introuvable : $VENV_DIR"
-    echo "💡 Créez-le avec : python -m venv venv"
-    exit 1
-fi
-
-echo "➡️ Activation du venv..."
+# === ÉTAPE 1 : Environnement ===
+echo "🔹 ÉTAPE 1/4 : Vérification de l'environnement"
 source "$VENV_DIR/bin/activate"
-echo "✅ Venv activé."
-echo
 
-# === Lecture des versions attendues ===
-echo "🔍 Lecture du snapshot..."
 PYTHON_EXPECTED=$(grep "^Python:" "$SNAPSHOT_FILE" | cut -d' ' -f2)
 PYTORCH_EXPECTED=$(grep "^PyTorch:" "$SNAPSHOT_FILE" | cut -d' ' -f2-)
 CUDA_EXPECTED=$(grep "^CUDA:" "$SNAPSHOT_FILE" | cut -d' ' -f2)
 
-echo "📦 Versions attendues :"
-echo "   Python : $PYTHON_EXPECTED"
-echo "   PyTorch: $PYTORCH_EXPECTED"
-echo "   CUDA   : $CUDA_EXPECTED"
-echo
+PYTHON_CURRENT=$(python -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')
+PYTORCH_CURRENT=$(python -c 'import torch; print(torch.__version__)' 2>/dev/null || echo "N/A")
+CUDA_CURRENT=$(python -c 'import torch; print(torch.version.cuda or "N/A")' 2>/dev/null || echo "N/A")
 
-# === Détection versions actuelles (dans le venv) ===
-echo "🔍 Détection de l'environnement actuel..."
-PYTHON_CURRENT=$(python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))")
-if python -c "import torch" >/dev/null 2>&1; then
-    PYTORCH_CURRENT=$(python -c "import torch; print(torch.__version__)")
-    CUDA_CURRENT=$(python -c "import torch; print(torch.version.cuda or 'N/A')")
-else
-    PYTORCH_CURRENT="non installé"
-    CUDA_CURRENT="N/A"
+echo "   Python : attendu=$PYTHON_EXPECTED | actuel=$PYTHON_CURRENT"
+echo "   PyTorch: attendu=$PYTORCH_EXPECTED | actuel=$PYTORCH_CURRENT"
+echo "   CUDA   : attendu=$CUDA_EXPECTED | actuel=$CUDA_CURRENT"
+
+if [[ "$PYTHON_EXPECTED" != "$PYTHON_CURRENT" ]] || [[ "$PYTORCH_EXPECTED" != "$PYTORCH_CURRENT" ]] || [[ "$CUDA_EXPECTED" != "$CUDA_CURRENT" ]]; then
+    echo "⚠️  L'environnement ne correspond pas."
 fi
 
-echo "⚙️ Versions actuelles :"
-echo "   Python : $PYTHON_CURRENT"
-echo "   PyTorch: $PYTORCH_CURRENT"
-echo "   CUDA   : $CUDA_CURRENT"
+read -p "✅ Continuer vers la sélection des commits ? (O/n) : " -n 1 -r
 echo
+[[ $REPLY =~ ^[Nn]$ ]] && { echo "❌ Annulé."; exit 1; }
 
-# === Confirmation ===
-MATCH=1
-[ "$PYTHON_EXPECTED" != "$PYTHON_CURRENT" ] && MATCH=0
-[ "$PYTORCH_EXPECTED" != "$PYTORCH_CURRENT" ] && MATCH=0
-[ "$CUDA_EXPECTED" != "$CUDA_CURRENT" ] && MATCH=0
+# === ÉTAPE 2 : Collecter les actions nécessaires ===
+echo
+echo "🔹 ÉTAPE 2/4 : Détection des commits à mettre à jour..."
 
-if [ "$MATCH" -eq 0 ]; then
-    echo "⚠️ ATTENTION : L'environnement NE CORRESPOND PAS."
-    read -p "Continuer quand même ? (o/N) : " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Oo]$ ]]; then
-        echo "❌ Annulé."
-        exit 1
-    fi
-else
-    echo "✅ Environnement compatible."
-    read -p "Continuer la restauration ? (O/n) : " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
-        echo "❌ Annulé."
-        exit 1
-    fi
+actions=()
+modified_nodes=()  # ← Tous les nodes modifiés (clonés OU mis à jour)
+
+COMFYUI_COMMIT=$(grep "^ComfyUI " "$SNAPSHOT_FILE" | grep -v "ComfyUI-" | head -n1 | cut -d' ' -f2)
+[ -z "$COMFYUI_COMMIT" ] && { echo "❌ SHA ComfyUI non trouvé"; exit 1; }
+
+CURRENT=$(git -C "$COMFYUI_ROOT" rev-parse HEAD 2>/dev/null || echo "")
+if [[ "$CURRENT" != "$COMFYUI_COMMIT"* ]]; then
+    actions+=("comfyui-core|$COMFYUI_COMMIT|update|")
 fi
-
-# === Restauration ComfyUI core ===
-COMFYUI_LINE=$(grep "^ComfyUI " "$SNAPSHOT_FILE" | grep -v "ComfyUI-" | head -n1)
-if [ -z "$COMFYUI_LINE" ]; then
-    echo "❌ Ligne 'ComfyUI' non trouvée dans le snapshot."
-    exit 1
-fi
-
-COMFYUI_COMMIT=$(echo "$COMFYUI_LINE" | cut -d' ' -f2)
-echo
-echo "🔄 Restauration de ComfyUI @ ${COMFYUI_COMMIT:0:8}..."
-cd "$COMFYUI_ROOT"
-git fetch
-git checkout "$COMFYUI_COMMIT"
-echo "✅ ComfyUI restauré."
-echo
-
-# === Restauration custom nodes ===
-echo "🔄 Restauration des custom nodes..."
-CUSTOM_NODES_DIR="$COMFYUI_ROOT/custom_nodes"
-mkdir -p "$CUSTOM_NODES_DIR"
 
 while IFS= read -r line; do
-    # Vérifier si la ligne contient un nom + commit (40 caractères hexa)
-    if [[ "$line" =~ ^[a-zA-Z0-9_.-]+\ +[a-f0-9]{40} ]]; then
-        NAME=$(echo "$line" | cut -d' ' -f1)
-        COMMIT=$(echo "$line" | cut -d' ' -f2)
-        REMAINDER=$(echo "$line" | cut -d' ' -f3-)
-        # Déterminer si le reste est une URL (et non une info système)
-        if [[ -n "$REMAINDER" && "$REMAINDER" != *"GPU:"* && "$REMAINDER" != *"Python:"* && "$REMAINDER" != *"PyTorch:"* ]]; then
-            URL="$REMAINDER"
-        else
-            URL=""
-        fi
+    if [[ "$line" =~ ^([a-zA-Z0-9_.-]+)[[:space:]]+([a-f0-9]{40}) ]]; then
+        NAME="${BASH_REMATCH[1]}"
+        COMMIT="${BASH_REMATCH[2]}"
 
-        echo "   - $NAME @ ${COMMIT:0:8}"
+        case "$NAME" in
+            __pycache__|Python|PyTorch|CUDA|GPU|ComfyUI) continue ;;
+        esac
+
         NODE_DIR="$CUSTOM_NODES_DIR/$NAME"
-
-        if [ ! -d "$NODE_DIR" ]; then
-            if [ -n "$URL" ]; then
-                git clone "$URL" "$NODE_DIR"
-            else
-                echo "     ⚠️ URL manquante, ignoré."
-                continue
-            fi
+        if [ ! -d "$NODE_DIR/.git" ]; then
+            URL=$(echo "$line" | cut -d' ' -f3-)
+            [[ "$URL" == *" "* ]] && URL=""
+            actions+=("$NAME|$COMMIT|clone|$URL")
         else
-            cd "$NODE_DIR"
-            git fetch
-            cd "$COMFYUI_ROOT"
+            CURRENT=$(git -C "$NODE_DIR" rev-parse HEAD 2>/dev/null || echo "")
+            if [[ "$CURRENT" != "$COMMIT"* ]]; then
+                actions+=("$NAME|$COMMIT|update|")
+            fi
         fi
-
-        cd "$NODE_DIR"
-        git checkout "$COMMIT"
-        cd "$COMFYUI_ROOT"
     fi
 done < "$SNAPSHOT_FILE"
 
-# === Installation dépendances ===
-echo
-echo "📥 Installation des dépendances dans le venv..."
-pip install -r requirements.txt
+if [ ${#actions[@]} -eq 0 ]; then
+    echo "   ✅ Tous les commits sont à jour."
+    SELECTED_ACTIONS=()
+else
+    echo "   📋 Sélectionnez les commits à appliquer :"
+    for i in "${!actions[@]}"; do
+        IFS='|' read -r NAME COMMIT TYPE URL <<< "${actions[i]}"
+        if [ "$TYPE" = "clone" ]; then
+            echo "   $((i+1)). ➕ Cloner : $NAME @ ${COMMIT:0:8}"
+        else
+            echo "   $((i+1)). 🔄 Mettre à jour : $NAME @ ${COMMIT:0:8}"
+        fi
+    done
+    echo "   all. Tous les éléments ci-dessus"
+    echo
 
-for req in "$CUSTOM_NODES_DIR"/*/requirements.txt; do
-    if [ -f "$req" ]; then
-        echo "   - Installation : $req"
-        pip install -r "$req"
+    read -p "Votre choix (ex: 1 3 5 ou 'all') : " CHOICE
+
+    SELECTED_ACTIONS=()
+    if [ "$CHOICE" = "all" ]; then
+        for i in "${!actions[@]}"; do
+            SELECTED_ACTIONS+=("$i")
+        done
+    else
+        for num in $CHOICE; do
+            idx=$((num - 1))
+            if [ "$idx" -ge 0 ] && [ "$idx" -lt ${#actions[@]} ]; then
+                SELECTED_ACTIONS+=("$idx")
+            fi
+        done
     fi
-done
+fi
+
+# === ÉTAPE 3 : Appliquer les commits sélectionnés ===
+echo
+echo "🔹 ÉTAPE 3/4 : Application des commits sélectionnés..."
+
+if [ ${#SELECTED_ACTIONS[@]} -eq 0 ]; then
+    echo "   ✅ Aucune action sélectionnée."
+else
+    for idx in "${SELECTED_ACTIONS[@]}"; do
+        IFS='|' read -r NAME COMMIT TYPE URL <<< "${actions[idx]}"
+        if [ "$TYPE" = "clone" ]; then
+            NODE_DIR="$CUSTOM_NODES_DIR/$NAME"
+            mkdir -p "$CUSTOM_NODES_DIR"
+            if [ -n "$URL" ]; then
+                echo "   Clonage : $NAME"
+                git clone "$URL" "$NODE_DIR" >/dev/null 2>&1
+                modified_nodes+=("$NAME")  # ← ajouté
+            else
+                echo "   ⚠️ $NAME : URL manquante, ignoré"
+                continue
+            fi
+        else
+            if [ "$NAME" = "comfyui-core" ]; then
+                echo "   Mise à jour : ComfyUI"
+                cd "$COMFYUI_ROOT"
+                git fetch >/dev/null 2>&1
+                git checkout "$COMMIT" >/dev/null 2>&1
+                # Pas de dépendances pour ComfyUI → pas ajouté à modified_nodes
+            else
+                echo "   Mise à jour : $NAME"
+                NODE_DIR="$CUSTOM_NODES_DIR/$NAME"
+                cd "$NODE_DIR"
+                git fetch >/dev/null 2>&1
+                git checkout "$COMMIT" >/dev/null 2>&1
+                modified_nodes+=("$NAME")  # ← ajouté aussi pour les mises à jour
+            fi
+        fi
+    done
+    echo "   ✅ Commits appliqués."
+fi
+
+read -p "✅ Continuer vers la gestion des dépendances ? (O/n) : " -n 1 -r
+echo
+[[ $REPLY =~ ^[Nn]$ ]] && { echo "❌ Annulé."; exit 1; }
+
+# === ÉTAPE 4 : Dépendances pour TOUS les nodes modifiés ===
+echo
+echo "🔹 ÉTAPE 4/4 : Installation des dépendances (nodes modifiés)..."
+
+if [ ${#modified_nodes[@]} -eq 0 ]; then
+    echo "   ℹ️  Aucun node modifié → aucune dépendance à installer."
+else
+    for NAME in "${modified_nodes[@]}"; do
+        NODE_DIR="$CUSTOM_NODES_DIR/$NAME"
+        [ ! -d "$NODE_DIR" ] && continue
+
+        INSTALL_PY="$NODE_DIR/install.py"
+        REQ_TXT="$NODE_DIR/requirements.txt"
+
+        if [ -f "$INSTALL_PY" ]; then
+            echo "      - $NAME : exécution de install.py"
+            (
+                cd "$NODE_DIR"
+                python install.py
+            ) || echo "        ⚠️ Échec de install.py (continuation)"
+        elif [ -f "$REQ_TXT" ]; then
+            echo "      - $NAME : installation via requirements.txt"
+            if grep -q "^cgal" "$REQ_TXT" 2>/dev/null; then
+                echo "        ⚠️ cgal ignoré (bug connu)"
+            else
+                pip install -r "$REQ_TXT" >/dev/null 2>&1 || echo "        ⚠️ Échec partiel (ignoré)"
+            fi
+        else
+            echo "      - $NAME : aucun fichier d'installation trouvé"
+        fi
+    done
+fi
+
+# Info ComfyUI
+if [ -f "$COMFYUI_ROOT/requirements.txt" ]; then
+    echo "   ℹ️  ComfyUI : requirements.txt présent (pas d'installation auto)"
+fi
 
 echo
-echo "✅ Restauration terminée !"
+echo "✨ Restauration terminée !"
 echo "🚀 Redémarrez ComfyUI pour appliquer les changements."
